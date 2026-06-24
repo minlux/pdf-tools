@@ -3,23 +3,44 @@
 Auto-crop single PDF or all PDFs in a folder using pdfcrop and write results to a 'cropped/' subfolder.
 
 Usage:
-    ./autocrop_pdfs.py [folder] [--margins N] [--margins "L T R B"] [--rewrite] [--verbose]
+    ./autocrop_pdfs.py [folder] [--margins N] [--margins "L T R B"] [--first-page-only] [--rewrite] [--verbose]
 
 Arguments:
-    folder          Folder containing PDFs (default: current directory)
-    --margins N     Add N pt margin on all sides after cropping (default: 0)
-    --rewrite       Re-render via Ghostscript after cropping to permanently remove
-                    content outside the crop box (requires rewrite-pdf in PATH)
-    --verbose       Print pdfcrop output for each file
+    folder             Folder containing PDFs (default: current directory)
+    --margins N        Add N pt margin on all sides after cropping (default: 0)
+    --first-page-only  Extract only the first page before cropping (requires pikepdf)
+    --rewrite          Re-render via Ghostscript after cropping to permanently remove
+                       content outside the crop box (requires rewrite-pdf in PATH)
+    --verbose          Print pdfcrop output for each file
 
 Requires: pdfcrop (part of TeX Live / MiKTeX)
+          pikepdf (for --first-page-only): pip install pikepdf
           rewrite-pdf (for --rewrite)
 """
 
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+
+def extract_first_page(input_path: Path, output_path: Path) -> bool:
+    try:
+        import pikepdf
+    except ImportError:
+        print("Error: pikepdf is required for --first-page-only. Run: pip install pikepdf", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with pikepdf.open(input_path) as pdf:
+            dst = pikepdf.Pdf.new()
+            dst.pages.append(pdf.pages[0])
+            dst.save(output_path)
+        return True
+    except Exception as e:
+        print(f"Error extracting first page: {e}", file=sys.stderr)
+        return False
 
 
 def rewrite_pdf(path: Path) -> bool:
@@ -50,6 +71,8 @@ def main():
     parser.add_argument("--margins", default="0",
                         help='Margin in pt after cropping. One value for all sides, '
                              'or "left top right bottom" (default: 0)')
+    parser.add_argument("--first-page-only", action="store_true",
+                        help="Extract only the first page before cropping (requires pikepdf)")
     parser.add_argument("--rewrite", action="store_true",
                         help="Re-render via Ghostscript after cropping to permanently remove hidden content")
     parser.add_argument("--verbose", action="store_true", help="Show pdfcrop output for each file")
@@ -82,29 +105,41 @@ def main():
     print(f"Input:   {target}")
     print(f"Output:  {out_dir}")
     print(f"Margins: {args.margins} pt")
+    print(f"First p: {'yes' if args.first_page_only else 'no'}")
     print(f"Rewrite: {'yes (Ghostscript)' if args.rewrite else 'no'}")
     print(f"Files:   {len(pdfs)}\n")
 
     ok = []
     failed = []
 
-    for pdf in pdfs:
-        out_path = out_dir / pdf.name
-        print(f"  {pdf.name} ... ", end="", flush=True)
-        if not crop_pdf(pdf, out_path, args.margins, args.verbose):
-            print("FAILED (pdfcrop)")
-            failed.append(pdf.name)
-            continue
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for pdf in pdfs:
+            out_path = out_dir / pdf.name
+            print(f"  {pdf.name} ... ", end="", flush=True)
 
-        if args.rewrite and not rewrite_pdf(out_path):
-            print("FAILED (rewrite-pdf)")
-            failed.append(pdf.name)
-            continue
+            crop_input = pdf
+            if args.first_page_only:
+                tmp_path = Path(tmp_dir) / pdf.name
+                if not extract_first_page(pdf, tmp_path):
+                    print("FAILED (first-page-only)")
+                    failed.append(pdf.name)
+                    continue
+                crop_input = tmp_path
 
-        in_kb = pdf.stat().st_size // 1024
-        out_kb = out_path.stat().st_size // 1024
-        print(f"{in_kb}K → {out_kb}K")
-        ok.append(pdf.name)
+            if not crop_pdf(crop_input, out_path, args.margins, args.verbose):
+                print("FAILED (pdfcrop)")
+                failed.append(pdf.name)
+                continue
+
+            if args.rewrite and not rewrite_pdf(out_path):
+                print("FAILED (rewrite-pdf)")
+                failed.append(pdf.name)
+                continue
+
+            in_kb = pdf.stat().st_size // 1024
+            out_kb = out_path.stat().st_size // 1024
+            print(f"{in_kb}K → {out_kb}K")
+            ok.append(pdf.name)
 
     print(f"\nDone: {len(ok)} cropped, {len(failed)} failed")
     if failed:
