@@ -32,3 +32,27 @@ sudo apt install texlive-extra-utils
 # macOS
 brew install --cask mactex
 ```
+
+### rewrite_pdf.sh
+
+Ghostscript:
+
+```bash
+# Debian/Ubuntu
+sudo apt install ghostscript
+
+# macOS
+brew install ghostscript
+```
+
+### svg_to_pdf.sh
+
+Inkscape:
+
+```bash
+# Debian/Ubuntu
+sudo apt install inkscape
+
+# macOS
+brew install --cask inkscape
+```
