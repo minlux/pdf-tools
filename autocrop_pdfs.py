@@ -10,15 +10,16 @@ Arguments:
     --margins N        Add N pt margin on all sides after cropping (default: 0)
     --first-page-only  Extract only the first page before cropping (requires pikepdf)
     --rewrite          Re-render via Ghostscript after cropping to permanently remove
-                       content outside the crop box (requires rewrite-pdf in PATH)
+                       content outside the crop box (requires gs in PATH)
     --verbose          Print pdfcrop output for each file
 
 Requires: pdfcrop (part of TeX Live / MiKTeX)
           pikepdf (for --first-page-only): pip install pikepdf
-          rewrite-pdf (for --rewrite)
+          gs / Ghostscript (for --rewrite)
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -44,8 +45,19 @@ def extract_first_page(input_path: Path, output_path: Path) -> bool:
 
 
 def rewrite_pdf(path: Path) -> bool:
-    result = subprocess.run(["rewrite-pdf", str(path)], capture_output=True, text=True)
-    return result.returncode == 0
+    tmp_fd, tmp_str = tempfile.mkstemp(dir=path.parent, suffix=".pdf")
+    tmp_path = Path(tmp_str)
+    os.close(tmp_fd)
+    result = subprocess.run(
+        ["gs", "-o", str(tmp_path), "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
+         "-dPDFSETTINGS=/prepress", "-dNOPAUSE", "-dBATCH", "-dQUIET", str(path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        tmp_path.replace(path)
+        return True
+    tmp_path.unlink(missing_ok=True)
+    return False
 
 
 def crop_pdf(input_path: Path, output_path: Path, margins: str, verbose: bool) -> bool:
@@ -98,8 +110,8 @@ def main():
     out_dir.mkdir(exist_ok=True)
     folder = target if target.is_dir() else target.parent
 
-    if args.rewrite and subprocess.run(["which", "rewrite-pdf"], capture_output=True).returncode != 0:
-        print("Error: 'rewrite-pdf' not found in PATH", file=sys.stderr)
+    if args.rewrite and subprocess.run(["which", "gs"], capture_output=True).returncode != 0:
+        print("Error: 'gs' (Ghostscript) not found in PATH", file=sys.stderr)
         sys.exit(1)
 
     print(f"Input:   {target}")
